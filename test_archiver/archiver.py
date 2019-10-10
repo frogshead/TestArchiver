@@ -3,6 +3,7 @@ from hashlib import sha1
 from datetime import datetime
 
 from database import PostgresqlDatabase, SQLiteDatabase
+from archiver_listener import DefaultListener, ChangeEngineListener
 
 ARCHIVER_VERSION = "0.14.2"
 
@@ -382,6 +383,7 @@ class Archiver:
         self.db = self._db(db_engine)
         self.stack = []
         self.keyword_statistics = {}
+        self.listeners = [ChangeEngineListener()]
 
     def _db(self, db_engine):
         if db_engine in ('postgresql', 'postgres'):
@@ -441,6 +443,8 @@ class Archiver:
             self.report_keyword_statistics()
 
         self.db._connection.commit()
+        for listener in self.listeners:
+            listener.end_run()
 
     def report_series(self, name, build_number):
         data = {
@@ -473,7 +477,10 @@ class Archiver:
             self._current_item('suite').update_status(attributes['status'], attributes['starttime'],
                                                attributes['endtime'])
             self._current_item('suite').metadata = attributes['metadata']
-        self.stack.pop().finish()
+        suite = self.stack.pop()
+        suite.finish()
+        for listener in self.listeners:
+            listener.suite_result(suite)
 
     def begin_test(self, name, class_name=None):
         self.stack.append(Test(self, name, class_name))
@@ -483,7 +490,10 @@ class Archiver:
             self._current_item('test').update_status(attributes['status'], attributes['starttime'],
                                                attributes['endtime'])
             self._current_item('test').tags = attributes['tags']
-        self.stack.pop().finish()
+        test = self.stack.pop()
+        test.finish()
+        for listener in self.listeners:
+            listener.test_result(test)
 
     def begin_status(self, status, start_time=None, end_time=None, elapsed=None):
         self._current_item().update_status(status, start_time, end_time, elapsed)
